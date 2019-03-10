@@ -1,0 +1,372 @@
+<body>
+  <canvas width=600 height=400></canvas>
+  <script type='module'>
+    const canvas = document.querySelector('canvas')
+    const ctx = canvas.getContext('2d')
+    window.ctx = ctx
+
+    const nodeSize = 20
+    const playerColors = ['gray', 'blue', 'red']
+
+    const randomInt = (from, to) => from + Math.floor(Math.random() * (to-from+1))
+
+    const render = (state) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.beginPath()
+      ctx.strokeRect(0, 0, canvas.width, canvas.height)
+      state.roads.forEach(road => {
+        const fromNode = state.nodes[road.from]
+        const toNode = state.nodes[road.to]
+        ctx.beginPath()
+        ctx.moveTo(fromNode.pos.x, fromNode.pos.y)
+        ctx.lineTo(toNode.pos.x, toNode.pos.y)
+        ctx.strokeStyle = 'black'
+        ctx.stroke()
+      })
+      state.nodes.forEach(node => {
+        ctx.beginPath()
+        ctx.rect(node.pos.x - nodeSize/2, node.pos.y- nodeSize/2, nodeSize, nodeSize)
+        ctx.fillStyle = playerColors[node.player]
+        ctx.fill()
+      })
+      state.unitGroups.forEach(unitGroup => {
+        let pos = {}
+        if (unitGroup.state === 'garrisoned') {
+          const onNode = state.nodes[unitGroup.onNodeIndex]
+          pos = onNode.pos
+        } else if (unitGroup.state === 'moving') {
+          const onRoad = state.roads[unitGroup.onRoadIndex]
+          let fromNode = state.nodes[onRoad.from]
+          let toNode = state.nodes[onRoad.to]
+          if (unitGroup.destinationIndex !== onRoad.to) {
+            let tmp = fromNode
+            fromNode = toNode
+            toNode = tmp
+          }
+          const proportionDownRoad = unitGroup.distanceFromOrigin / onRoad.distance
+          pos = {
+            x: (1-proportionDownRoad) * fromNode.pos.x + proportionDownRoad * toNode.pos.x,
+            y: (1-proportionDownRoad) * fromNode.pos.y + proportionDownRoad * toNode.pos.y
+          }
+        }
+        ctx.beginPath()
+        ctx.fillStyle = playerColors[unitGroup.player]
+        ctx.font = '20px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(unitGroup.numUnits, pos.x, Math.round(pos.y - nodeSize/1.5))
+        ctx.arc(pos.x, pos.y, nodeSize/4, 0, 2 * Math.PI)
+        ctx.fill()
+      })
+      if (state.selectedNodeIndex !== undefined) {
+        const selectedNode = state.nodes[state.selectedNodeIndex]
+        ctx.beginPath()
+        ctx.strokeStyle = playerColors[selectedNode.player]
+        ctx.lineWidth = 2
+        ctx.arc(selectedNode.pos.x, selectedNode.pos.y, nodeSize, 0, 2 * Math.PI)
+        ctx.stroke()
+        ctx.lineWidth = 1
+      }
+    }
+
+    const getInitialNodes = () => {
+      let nodes = [
+        {
+          player: 1,
+          pos: {
+            x: 100,
+            y: 200,
+          }
+        },
+        {
+          player: 2,
+          pos: {
+            x: 500,
+            y: 100,
+          }
+        },
+        {
+          player: 0,
+          pos: {
+            x: 300,
+            y: 200,
+          }
+        },
+        {
+          player: 0,
+          pos: {
+            x: 400,
+            y: 200,
+          }
+        },
+        {
+          player: 0,
+          pos: {
+            x: 270,
+            y: 320,
+          }
+        }
+      ]
+      return nodes
+    }
+
+    const getInitialUnitGroups = (nodes) => {
+      // {
+      //   player: 0,
+      //   numUnits: 0,
+      //   state: 'garrisoned',
+      //   onNodeIndex: 2,
+      //   onRoadIndex: undefined,
+      //   destinationIndex: undefined,
+      //   target: undefined,
+      // }
+      return nodes.map((node, i) => {
+        return {
+          player: node.player,
+          numUnits: 10,
+          state: 'garrisoned',
+          onNodeIndex: i,
+        }
+      })
+    }
+
+    const getInitialRoads = (nodes) => {
+      let roads = [
+        {
+          from: 0,
+          to: 1,
+        },
+        {
+          from: 0,
+          to: 2,
+        },
+        {
+          from: 1,
+          to: 2,
+        },
+        {
+          from: 0,
+          to: 4,
+        },
+        {
+          from: 4,
+          to: 3,
+        },
+        {
+          from: 3,
+          to: 1
+        }
+      ]
+      roads = roads.map(road => {
+        const fromNode = nodes[road.from]
+        const toNode = nodes[road.to]
+        return Object.assign(road, {
+          distance: Math.round(Math.sqrt(Math.pow(fromNode.pos.x - toNode.pos.x, 2) + Math.pow(fromNode.pos.y - toNode.pos.y, 2)))
+        })
+      })
+      return roads
+    }
+
+    const getInitialState = () => {
+      return {
+        nodes: getInitialNodes(),
+        roads: getInitialRoads(getInitialNodes()),
+        unitGroups: getInitialUnitGroups(getInitialNodes()),
+        selected: undefined,
+        ticks: 0,
+        actions: [],
+      }
+    }
+
+    const getUnitGroupInNode = (state, node) => {
+      return state.unitGroups.filter(unitGroup => unitGroup.state === 'garrisoned' && unitGroup.onNodeIndex === state.nodes.indexOf(node))[0]
+    }
+
+    const getTickedState = (state) => {
+      let newState = JSON.parse(JSON.stringify(state))
+      // Increment game clock
+      newState.ticks++
+      // Increment units
+      newState.nodes.map(node => {
+        if (node.player !== 0) {
+          let unitGroupsInNode = newState.unitGroups.filter(unitGroup => unitGroup.state === 'garrisoned' && unitGroup.onNodeIndex === newState.nodes.indexOf(node))
+          let unitGroupInNode
+          if (unitGroupsInNode.length > 0) {
+            unitGroupInNode = unitGroupsInNode[0]
+          } else {
+            unitGroupInNode = {
+              player: node.player,
+              numUnits: 0,
+              state: 'garrisoned',
+              onNodeIndex: newState.nodes.indexOf(node),
+            }
+            newState.unitGroups.push(unitGroupInNode)
+          }
+          if (state.ticks % 6 === 0) {
+            const underAttack = newState.unitGroups.filter(unitGroup => unitGroup.player !== node.player && unitGroup.state === 'moving' && unitGroup.destinationIndex === newState.nodes.indexOf(node)).filter(unitGroup => {
+              return 20 + unitGroup.distanceFromOrigin >= newState.roads[unitGroup.onRoadIndex].distance
+            }).length > 0
+            // We slow down rate of unit spawn in nodes under attack
+            if (!underAttack) {
+              unitGroupInNode.numUnits++
+            } else {
+              if (state.ticks % 12 === 0) {
+                unitGroupInNode.numUnits++
+              }
+            }
+          }
+        }
+      })
+      // Convert clicks to actions
+      if (newState.clicked) {
+        const nearbyNodes = newState.nodes.filter(node => Math.abs(node.pos.x - newState.clickedPos.x) < 20 && Math.abs(node.pos.y - newState.clickedPos.y) < 20)
+        if (nearbyNodes.length > 0) {
+          const nodeClicked = nearbyNodes[0]
+          const nodeClickedIndex = newState.nodes.indexOf(nodeClicked)
+          if (newState.selectedNodeIndex === nodeClickedIndex) {
+            newState.selectedNodeIndex = undefined
+          } else if (newState.selectedNodeIndex === undefined) {
+            if (nodeClicked.player === 1) {
+              newState.selectedNodeIndex = newState.nodes.indexOf(nodeClicked)
+            }
+          } else {
+            const roadsBetween = newState.roads.filter(road => [nodeClickedIndex, newState.selectedNodeIndex].indexOf(road.to) > -1 && [nodeClickedIndex, newState.selectedNodeIndex].indexOf(road.from) > -1)
+            if (roadsBetween.length > 0) {
+              newState.actions.push({
+                actionType: 'moveUnits',
+                fromNodeIndex: newState.selectedNodeIndex,
+                toNodeIndex: nodeClickedIndex,
+              })
+              newState.selectedNodeIndex = undefined
+            }
+          }
+        }
+      }
+      // Do AI actions
+      if (Math.random() > 0.98) {
+        let enemyNodes = newState.nodes.filter(node => node.player === 2)
+        // Filter to nodes with any units
+        enemyNodes = enemyNodes.filter(node => newState.unitGroups.filter(unitGroup => unitGroup.state === 'garrisoned' && unitGroup.onNodeIndex === newState.nodes.indexOf(node) && unitGroup.numUnits > 0).length > 0)
+        if (enemyNodes.length > 0) {
+          const enemyNode = enemyNodes[randomInt(0, enemyNodes.length - 1)]
+          const enemyNodeIndex = newState.nodes.indexOf(enemyNode)
+          const roadsFromNode = newState.roads.filter(road => road.to === enemyNodeIndex || road.from === enemyNodeIndex)
+          const potentialDestinations = roadsFromNode.map(road => {
+            return road.from === enemyNodeIndex ? road.to : road.from
+          })
+          const destinationIndex = potentialDestinations[randomInt(0, potentialDestinations.length - 1)]
+          newState.actions.push({
+            actionType: 'moveUnits',
+            fromNodeIndex: enemyNodeIndex,
+            toNodeIndex: destinationIndex,
+          })
+        }
+      }
+      // Handle actions
+      if (newState.actions.length > 0) {
+        newState.actions.forEach(action => {
+          let nodeToMoveUnitsFromIndex = action.fromNodeIndex
+          let nodeToMoveUnitsFrom = newState.nodes[nodeToMoveUnitsFromIndex]
+          let unitGroupToMove = getUnitGroupInNode(newState, nodeToMoveUnitsFrom)
+          unitGroupToMove.destinationIndex = action.toNodeIndex
+          unitGroupToMove.state = 'moving'
+          const onRoad = newState.roads.filter(road => [road.from, road.to].indexOf(nodeToMoveUnitsFromIndex) > -1 && [road.from, road.to].indexOf(unitGroupToMove.destinationIndex) > -1)[0]
+          unitGroupToMove.onRoadIndex = newState.roads.indexOf(onRoad)
+          unitGroupToMove.distanceFromOrigin = 1
+          let newUnitGroupToGarrison = {
+            player: unitGroupToMove.player,
+            numUnits: 0,
+            state: 'garrisoned',
+            onNodeIndex: nodeToMoveUnitsFromIndex,
+          }
+          newState.unitGroups.push(newUnitGroupToGarrison)
+        })
+      }
+      newState.actions = []
+      // Do movement
+      newState.unitGroups.forEach(unitGroup => {
+        if (unitGroup.state === 'moving') {
+          const arrivedAtNode = 20 + unitGroup.distanceFromOrigin >= newState.roads[unitGroup.onRoadIndex].distance
+          let arrivedAtEnemyNode = false
+          let arrivedAtFriendlyNode = false
+          const destinationNode = newState.nodes[unitGroup.destinationIndex]
+          if (arrivedAtNode && destinationNode.player !== unitGroup.player) {
+            arrivedAtEnemyNode = true
+          } else if (arrivedAtNode && destinationNode.player === unitGroup.player) {
+            arrivedAtFriendlyNode = true
+          }
+          let enemiesOnSameRoad = newState.unitGroups.filter(unitGroupB => unitGroupB.onRoadIndex === unitGroup.onRoadIndex && unitGroupB.player !== unitGroup.player && unitGroupB.state === 'moving')
+          let enemiesWithinRange = enemiesOnSameRoad.filter(enemyUnitGroup => 20 + enemyUnitGroup.distanceFromOrigin + unitGroup.distanceFromOrigin >= newState.roads[unitGroup.onRoadIndex].distance)
+          // console.log({arrivedAtNode, arrivedAtEnemyNode, arrivedAtFriendlyNode, enemiesOnSameRoad, enemiesWithinRange, unitGroup})
+          if (enemiesWithinRange.length === 0 && arrivedAtEnemyNode === false) {
+            unitGroup.distanceFromOrigin += 7
+          }
+          if (enemiesWithinRange.length > 0) {
+            enemiesWithinRange.forEach(enemyUnitGroup => {
+              const oldUnitGroupNumUnits = unitGroup.numUnits
+              if (newState.ticks % 2 === 0) {
+                // Don't subtract your own health since the enemy will do that for you
+                // unitGroup.numUnits = unitGroup.numUnits - 1
+                enemyUnitGroup.numUnits = enemyUnitGroup.numUnits - 1
+              }
+              if (unitGroup.numUnits < 1) {
+                newState.unitGroups.splice(newState.unitGroups.indexOf(unitGroup), 1)
+              }
+              if (enemyUnitGroup.numUnits < 1) {
+                newState.unitGroups.splice(newState.unitGroups.indexOf(enemyUnitGroup), 1)
+              }
+            })
+          }
+          if (arrivedAtEnemyNode) {
+            let enemyUnitGroup = getUnitGroupInNode(newState, destinationNode)
+            const oldUnitGroupNumUnits = unitGroup.numUnits
+            if (newState.ticks % 2 === 0) {
+              unitGroup.numUnits = unitGroup.numUnits - 1
+              enemyUnitGroup.numUnits = enemyUnitGroup.numUnits - 1
+            }
+            if (unitGroup.numUnits < 1) {
+              newState.unitGroups.splice(newState.unitGroups.indexOf(unitGroup), 1)
+            } else if (enemyUnitGroup.numUnits < 1) {
+              newState.unitGroups.splice(newState.unitGroups.indexOf(enemyUnitGroup), 1)
+              destinationNode.player = unitGroup.player
+              unitGroup.state = 'garrisoned'
+              unitGroup.onNodeIndex = unitGroup.destinationIndex
+            }
+          }
+          if (arrivedAtFriendlyNode) {
+            let alreadyGarrisonedUnitGroup = getUnitGroupInNode(newState, destinationNode)
+            alreadyGarrisonedUnitGroup.numUnits += unitGroup.numUnits
+            newState.unitGroups.splice(newState.unitGroups.indexOf(unitGroup), 1)
+          }
+        }
+      })
+      // Reset user actions
+      newState.clicked = false
+      if (newState.unitGroups.filter(node => node.player === 2).length === 0) {
+        alert('You win!')
+        clearInterval(ticker)
+      }
+      if (newState.unitGroups.filter(node => node.player === 1).length === 0) {
+        alert('You lose!')
+        clearInterval(ticker)
+      }
+      return newState
+    }
+
+    const tick = () => {
+      state = getTickedState(state)
+      window.state = state
+      render(state)
+    }
+
+    let state = getInitialState()
+    const ticker = setInterval(tick, 100)
+
+    canvas.addEventListener('click', (e) => {
+      const x = e.clientX - canvas.offsetLeft
+      const y = e.clientY - canvas.offsetTop
+      state.clicked = true
+      state.clickedPos = {x, y}
+    }, true)
+
+  </script>
+</body>
